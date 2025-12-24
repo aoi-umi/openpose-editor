@@ -24,6 +24,10 @@ const messages = {
             zoomDescription: 'Zoom in/out',
             hideKeybinding: 'Right click',
             hideDescription: 'Hide keypoint',
+            undoKeybinding: 'Undo',
+            undoDescription: 'Ctrl + Z',
+            redoKeybinding: 'Redo',
+            redoDescription: 'Ctrl + Y / Ctrl + Shift + Z',
             flip: 'Flip object',
         }
     },

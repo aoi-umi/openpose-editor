@@ -3,7 +3,7 @@ import { defineComponent, type UnwrapRef, reactive, markRaw, toRaw } from 'vue';
 import { fabric } from 'fabric';
 import { PlusSquareOutlined, CloseOutlined, UploadOutlined, DownloadOutlined } from '@ant-design/icons-vue';
 import OpenposeObjectPanel from './components/OpenposeObjectPanel.vue';
-import Header from './components/Header.vue';
+import HeaderComp from './components/Header.vue';
 import {
   OpenposePerson,
   OpenposeBody,
@@ -19,12 +19,17 @@ import type { UploadFile } from 'ant-design-vue';
 import LockSwitch from './components/LockSwitch.vue';
 import _ from 'lodash';
 import CryptoJS from 'crypto-js';
+import { loadTheme } from './utils';
 
 interface LockableUploadFile extends UploadFile {
   locked: boolean;
   scale: number;
 };
 
+interface HistoryStep {
+  action: string;
+  data: any;
+};
 interface AppData {
   canvasHeight: number;
   canvasWidth: number;
@@ -49,6 +54,13 @@ interface AppData {
 
   // The modal id to post message back to.
   modalId: string | undefined;
+
+  // History for undo/redo.
+  history: {
+    index: number;
+    locked: boolean;
+    steps: HistoryStep[];
+  };
 };
 
 /**
@@ -87,7 +99,7 @@ const default_left_hand_keypoints: [number, number, number][] = [
     1
   ],
   [
-    26.000015258789062,
+    26.00001525878906,
     109.6749968987715,
     1
   ],
@@ -349,14 +361,20 @@ export default defineComponent({
       activePersonId: undefined,
       activeBodyPart: undefined,
       modalId: undefined,
+      history: {
+        index: -1,
+        locked: false,
+        steps: [],
+      }
     };
   },
   setup() {
+    loadTheme();
     return { OpenposeBodyPart };
   },
   mounted() {
     this.$nextTick(() => {
-      this.canvas = markRaw(new fabric.Canvas(<HTMLCanvasElement>this.$refs.editorCanvas, {
+      this.canvas = markRaw(new fabric.Canvas(this.$refs.editorCanvas as HTMLCanvasElement, {
         backgroundColor: '#222222',
         preserveObjectStacking: true,
         fireRightClick: true,
@@ -421,6 +439,7 @@ export default defineComponent({
         // Only handles right click events.
         if (event.button !== 3) return;
         if (!(event.target instanceof OpenposeKeypoint2D)) return;
+        this.pushHistoryStep('hide_keypoint');
         event.target._visible = false;
 
         this.canvas?.renderAll();
@@ -433,6 +452,11 @@ export default defineComponent({
       this.canvas.on('selection:cleared', selectionHandler);
       this.canvas.on('selection:updated', selectionHandler);
       this.canvas.on('mouse:down', hideKeypointHandler);
+
+      this.canvas.on('object:added', () => this.pushHistoryStep('added'));
+      this.canvas.on('object:removed', () => this.pushHistoryStep('removed'));
+      this.canvas.on('object:modified', () => this.pushHistoryStep('modified'));
+
 
       // Zoom handler.
       this.canvas.on('mouse:wheel', (opt: fabric.IEvent<WheelEvent>) => {
@@ -452,7 +476,22 @@ export default defineComponent({
       // Enable panning by press SPACE or F because some users report SPACE
       // scrolls the iframe despite `e.preventDefault` is called. Issue #7.
       // Add keydown event to document
+      const undoThrottle = _.throttle(this.undo, 100);
+      const redoThrottle = _.throttle(this.redo, 100);
       document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey || e.metaKey) {
+          if (e.code === 'KeyZ') {
+            if (e.shiftKey) {
+              redoThrottle();
+            } else {
+              undoThrottle();
+            }
+            e.preventDefault();
+          } else if (e.code === 'KeyY') {
+            redoThrottle();
+            e.preventDefault();
+          }
+        }
         if (e.code === 'Space' || e.code === 'KeyF') {
           panningEnabled = true;
           this.canvas!.selection = false;
@@ -507,6 +546,8 @@ export default defineComponent({
           ready: true
         }, '*');
       }
+
+      this.pushHistoryStep('init');
     });
   },
   methods: {
@@ -1014,6 +1055,39 @@ export default defineComponent({
         link.click();
       });
     },
+
+    // Undo/Redo functionality
+    undo() {
+      if (this.history.index <= 0 || this.history.locked) return;
+      // console.log('undo', this.history.index, this.history.steps.length, this.history.steps);
+      this.history.locked = true;
+      this.history.index -= 1;
+      const step = this.history.steps[this.history.index];
+      this.loadHistory('undo', step);
+      this.history.locked = false;
+    },
+    redo() {
+      if (this.history.index >= this.history.steps.length - 1 || this.history.locked) return;
+      // console.log('redo', this.history.index, this.history.steps.length, this.history.steps);
+      this.history.locked = true;
+      this.history.index += 1;
+      const step = this.history.steps[this.history.index];
+      this.loadHistory('redo', step);
+      this.history.locked = false;
+    },
+    loadHistory(operation: string, step: HistoryStep) {
+      this.clearCanvas();
+      this.loadPeopleFromJson(step.data);
+      this.canvas?.renderAll();
+    },
+    pushHistoryStep(action: string) {
+      if (this.history.locked) return;
+      // console.log('Push history step ', this.history.index, action);
+      this.history.index += 1;
+      this.history.steps = this.history.steps.slice(0, this.history.index);
+      const data = this.getCanvasAsOpenposeJson();
+      this.history.steps.push({ action, data });
+    }
   },
   components: {
     PlusSquareOutlined,
@@ -1022,7 +1096,7 @@ export default defineComponent({
     DownloadOutlined,
     OpenposeObjectPanel,
     LockSwitch,
-    Header,
+    HeaderComp,
   }
 });
 </script>
@@ -1030,7 +1104,7 @@ export default defineComponent({
 <template>
   <a-row>
     <a-col :span="8" id="control-panel">
-      <Header></Header>
+      <HeaderComp></HeaderComp>
       <a-button v-if="modalId !== undefined" @click="sendCanvasAsFrameMessage">
         {{ $t('ui.sendPose') }}
       </a-button>
@@ -1041,6 +1115,8 @@ export default defineComponent({
         <a-descriptions-item :label="$t('ui.panningKeybinding')">{{ $t('ui.panningDescription') }}</a-descriptions-item>
         <a-descriptions-item :label="$t('ui.zoomKeybinding')">{{ $t('ui.zoomDescription') }}</a-descriptions-item>
         <a-descriptions-item :label="$t('ui.hideKeybinding')">{{ $t('ui.hideDescription') }}</a-descriptions-item>
+        <a-descriptions-item :label="$t('ui.undoKeybinding')">{{ $t('ui.undoDescription') }}</a-descriptions-item>
+        <a-descriptions-item :label="$t('ui.redoKeybinding')">{{ $t('ui.redoDescription') }}</a-descriptions-item>
       </a-descriptions>
       <a-divider orientation="left" orientation-margin="0px">
         {{ $t('ui.canvas') }}

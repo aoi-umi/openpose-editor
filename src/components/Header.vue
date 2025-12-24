@@ -3,16 +3,17 @@ import { GithubOutlined, StarOutlined } from '@ant-design/icons-vue';
 import { onMounted, ref } from 'vue';
 
 export default {
-    name: 'Header',
+    name: 'HeaderComp',
     components: {
         GithubOutlined,
         StarOutlined,
     },
     setup(props) {
+        const env = import.meta.env;
         let stars = ref<number | null>(null);
+        const repoName = env.VITE_GIT_REPO;
+        const repoOwner = env.VITE_GIT_OWNER;
         onMounted(async () => {
-            const repoOwner = "huchenlei";
-            const repoName = "sd-webui-openpose-editor";
 
             try {
                 const response = await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}`);
@@ -29,6 +30,8 @@ export default {
 
         return {
             stars,
+            repoOwner,
+            repoName,
         };
     },
 };
@@ -40,10 +43,10 @@ export default {
             <a-page-header>
                 <template #title>
                     <a-space>
-                        <a href="https://github.com/huchenlei/sd-webui-openpose-editor"
+                        <a :href="`https://github.com/${repoOwner}/${repoName}`"
                             target="_blank"><github-outlined /></a>
-                        <span><b>SD-WEBUI-OPENPOSE-EDITOR</b></span>
-                        <a v-if="stars !== null" href="https://github.com/huchenlei/sd-webui-openpose-editor/stargazers"
+                        <span><b>{{ repoName }}</b></span>
+                        <a v-if="stars !== null" :href="`https://github.com/${repoOwner}/${repoName}/stargazers`"
                             target="_blank">
                             {{ stars }} <star-outlined />
                         </a>
